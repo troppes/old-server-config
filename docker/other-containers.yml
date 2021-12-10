@@ -1,0 +1,396 @@
+### Games
+
+valheim:
+  image: lloesche/valheim-server
+  ports:
+    - "2456-2458:2456-2458/udp"
+  container_name: valheim
+  restart: unless-stopped
+  networks:
+    - valheim
+  volumes:
+    - "/srv/valheim:/config"
+  environment:
+    SERVER_NAME: "Server"
+    WORLD_NAME: "Herfiligrfold"
+    SERVER_PASS: "badpass"
+
+gmod:
+  image: hackebein/garrysmod
+  container_name: gmod
+  volumes:
+    - "/srv/gmod/:/opt/steam/"
+    - "/srv/gmod/server.cfg:/opt/steam/garrysmod/cfg/server.cfg"
+  environment:
+    WORKSHOPCOLLECTIONID: "TRUE"
+    GAMEMODE: "terrortown"
+    MAP: "gm_construct"
+    AUTHKEY: ${GMOD_AUTH_KEY}
+    GLST: ${GMOD_GLST_TOKEN}
+    WORKSHOP: "123"
+    WORKSHOPDL: "123"
+  restart: always
+  tty: true
+  stdin_open: true
+  networks:
+    - traefik
+  labels:
+    - "traefik.enable=true"
+    #Minecraft-TCP-Upgrade
+    - "traefik.tcp.routers.gmod-tcp.rule=HostSNI(`*`)"
+    - "traefik.tcp.routers.gmod-tcp.entrypoints=gmod-tcp"
+    #Minecraft-UDP-Upgrade
+    - "traefik.udp.routers.gmod-udp.entrypoints=gmod-udp"
+
+minecraft:
+  image: itzg/minecraft-server
+  container_name: minecraft
+  restart: unless-stopped
+  networks:
+    - traefik
+  volumes:
+    - "/srv/minecraft/modpacks/rlcraft:/data"
+  tty: true
+  stdin_open: true
+  environment:
+    #For Curseforge Packs
+    #TYPE: "CURSEFORGE"
+    #CF_SERVER_MOD: "RLCraft_Server_v2.8.2.zip"
+    #For Generic Modpacks
+    TYPE: FORGE
+    VERSION: 1.12.2
+    FORGEVERSION: 14.23.5.2838
+    GENERIC_PACK: "RLCraft_Server_v2.8.2.zip"
+    GENERIC_PACK_STRIP_DIRS: "1"
+    #OTHER
+    EULA: "TRUE"
+    DIFFICULTY: "normal"
+    MAX_PLAYERS: 10
+    MAX_WORLD_SIZE: 10000
+    ALLOW_NETHER: "true"
+    TZ: "Europe/Berlin"
+    ANNOUNCE_PLAYER_ACHIEVEMENTS: "true"
+    ENABLE_COMMAND_BLOCK: "false"
+    GENERATE_STRUCTURES: "true"
+    OPS: user
+    MAX_BUILD_HEIGHT: 256
+    SPAWN_PROTECTION: 0
+    MODE: survival
+    MOTD: "Wanna buy some Diamonds: Only 5,99!"
+    INIT_MEMORY: 4G
+    MAX_MEMORY: 5G
+  labels:
+    - "traefik.enable=true"
+    #Minecraft-TCP-Upgrade
+    - "traefik.tcp.routers.minecraft-tcp.rule=HostSNI(`*`)"
+    - "traefik.tcp.routers.minecraft-tcp.entrypoints=mc-tcp"
+    #Minecraft-UDP-Upgrade
+    - "traefik.udp.routers.minecraft-udp.entrypoints=mc-udp"
+
+
+### ELK
+
+filebeat:
+  image: docker.elastic.co/beats/filebeat:7.7.0
+  container_name: filebeat
+  command: --strict.perms=false
+  restart: always
+  user: root
+  depends_on:
+    - elasticsearch
+    - kibana
+  volumes:
+    - /var/log/:/hostlogs:ro
+    - /srv/backup/backup.log/:/backup.log:ro
+    - /srv/beats/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+    - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+  networks:
+    - elastic
+
+heartbeat:
+  image: docker.elastic.co/beats/heartbeat:7.7.0
+  container_name: heartbeat
+  command: --strict.perms=false
+  restart: always
+  depends_on:
+    - elasticsearch
+    - kibana
+  volumes:
+    - /srv/beats/heartbeat.yml:/usr/share/heartbeat/heartbeat.yml:ro
+  networks:
+    - elastic
+    - traefik
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.7.0
+    container_name: kibana
+    restart: always
+    depends_on:
+      - elasticsearch
+    volumes:
+      - /srv/kibana/config/kibana.yml:/usr/share/kibana/config/kibana.yml
+    networks:
+      - traefik
+      - elastic
+    labels:
+      - "traefik.enable=true"
+      # Kibana
+      - "traefik.http.routers.kibana.rule=Host(`kibana.user.home`)"
+      - "traefik.http.routers.kibana.entrypoints=web-secure"
+      - "traefik.http.routers.kibana.tls=true"
+      - "traefik.http.routers.kibana.tls.certresolver=cert-user"
+      - "traefik.http.routers.kibana.service=kibana-lb"
+      # Kibana HTTPS-Upgrade
+      - "traefik.http.routers.kibana-unsecure.rule=Host(`kibana.user.home`)"
+      - "traefik.http.routers.kibana-unsecure.entrypoints=web"
+      - "traefik.http.routers.kibana-unsecure.middlewares=redirect-https@file"
+      - "traefik.http.routers.kibana-unsecure.service=kibana-lb"
+      # Load-Balancer to route to another port
+      - "traefik.http.services.kibana-lb.loadbalancer.server.port=5601"
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.7.0
+    container_name: elasticsearch
+    restart: always
+    environment:
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g -Des.transport.cname_in_publish_address=true"
+    ulimits:
+      memlock: -1
+    volumes:
+      - /srv/elasticsearch/data/:/usr/share/elasticsearch/data/
+      - /srv/elasticsearch/config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+    networks:
+      - elastic
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      #ElasticSearch-HTTPS
+      - "traefik.http.routers.elastic.rule=Host(`elasticsearch.user.home`)"
+      - "traefik.http.routers.elastic.entrypoints=web-secure"
+      - "traefik.http.routers.elastic.tls=true"
+      - "traefik.http.routers.elastic.tls.certresolver=cert-user"
+      - "traefik.http.routers.elastic.service=elastic-lb"
+      #ElasticSearch-HTTP-Upgrade
+      - "traefik.http.routers.elastic-unsecure.rule=Host(`elasticsearch.user.home`)"
+      - "traefik.http.routers.elastic-unsecure.entrypoints=web"
+      - "traefik.http.routers.elastic-unsecure.middlewares=redirect-https@file"
+      - "traefik.http.routers.elastic-unsecure.service=elastic-lb"
+      # Load-Balancer for special Ports
+      - "traefik.http.services.elastic-lb.loadbalancer.server.port=9200"
+
+
+#Labels for MySQL
+
+# Filebeat
+#- "co.elastic.logs/module=mysql"
+#- "co.elastic.logs/fileset.stdout: error"
+#- "co.elastic.logs/fileset.stderr: slowlog"
+# Metricbeat
+#- "co.elastic.metrics/module=mysql"
+#- "co.elastic.metrics/metricsets=status"
+#- "co.elastic.metrics/username=${METRICBEATS_MYSQL_USER}"
+#- "co.elastic.metrics/password=${METRICBEATS_MYSQL_PASSWORD}"
+#- "co.elastic.metrics/hosts=${METRICBEATS_MYSQL_USER}:${METRICBEATS_MYSQL_PASSWORD}@tcp(mariadb:3306)/"
+
+
+### Photoprism
+
+photoprism:
+  image: photoprism/photoprism:latest
+  container_name: photoprism
+  restart: unless-stopped
+  depends_on:
+    - mariadb
+  networks:
+    - traefik
+    - mariadb
+  volumes:
+    - /srv/photos/storage:/photoprism/storage
+    - /srv/photos/originals:/photoprism/originals
+  security_opt:
+    - seccomp:unconfined
+    - apparmor:unconfined
+  environment:
+    PHOTOPRISM_ADMIN_PASSWORD: ${PHOTOPRISM_ADMIN_PASSWORD}
+    PHOTOPRISM_PUBLIC: "false"
+    PHOTOPRISM_UPLOAD_NSFW: "true"
+    PHOTOPRISM_DETECT_NSFW: "true"
+    PHOTOPRISM_SITE_URL: "https://photos.user.home/"
+    PHOTOPRISM_SITE_TITLE: "Photoprism"
+    PHOTOPRISM_SITE_CAPTION: "User's gallery"
+    PHOTOPRISM_SITE_DESCRIPTION: "User's personal gallery"
+    PHOTOPRISM_SITE_AUTHOR: "User"
+    PHOTOPRISM_DATABASE_DRIVER: "mysql"
+    PHOTOPRISM_DATABASE_DSN: ${PHOTOPRISM_DATABASE_DSN}
+  labels:
+    - "traefik.enable=true"
+    # Photoprism
+    - "traefik.http.routers.photoprism.rule=Host(`photos.user.home`)"
+    - "traefik.http.routers.photoprism.entrypoints=web-secure"
+    - "traefik.http.routers.photoprism.tls=true"
+    - "traefik.http.routers.photoprism.tls.certresolver=cert-user"
+    - "traefik.http.routers.photoprism.service=photoprism-lb"
+    # Photoprism HTTPS-Upgrade
+    - "traefik.http.routers.photoprism-unsecure.rule=Host(`photos.user.home`)"
+    - "traefik.http.routers.photoprism-unsecure.entrypoints=web"
+    - "traefik.http.routers.photoprism-unsecure.middlewares=redirect-https@file"
+    - "traefik.http.routers.photoprism-unsecure.service=photoprism-lb"
+    # load-Balancer to route to another port
+    - "traefik.http.services.photoprism-lb.loadbalancer.server.port=2342"
+
+
+### Matrix
+
+postgres:
+  image: postgres:13-alpine
+  container_name: postgres
+  restart: unless-stopped
+  networks:
+    - postgres
+  volumes:
+    - /srv/postgres:/var/lib/postgresql/data
+  environment:
+    - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+
+synapse:
+  image: matrixdotorg/synapse:latest
+  container_name: synapse
+  restart: unless-stopped
+  depends_on:
+    - postgres
+  networks:
+    - traefik
+    - postgres
+    - matrix
+  volumes:
+    - /srv/matrix/synapse:/data
+    - /srv/matrix/bridge/telegram:/telegram
+    - /srv/matrix/bridge/signal:/signal
+    - /srv/matrix/bridge/whatsapp:/whatsapp
+  labels:
+    - "traefik.enable=true"
+    - "traefik.http.routers.matrix.rule=Host(`matrix.user.home`) || Host(`user.home`) && PathPrefix(`/_matrix`)"
+    - "traefik.http.routers.matrix.priority=2"
+    - "traefik.http.routers.matrix.tls=true"
+    - "traefik.http.routers.matrix.tls.certresolver=cert-user"
+    - "traefik.http.routers.matrix.entrypoints=web-secure"
+    - "traefik.http.routers.matrix-unsecure.rule=Host(`matrix.user.home`)"
+    - "traefik.http.routers.matrix-unsecure.entrypoints=web"
+    - "traefik.http.routers.matrix-unsecure.middlewares=redirect-https@file, caldav-wellknown@file"
+
+synapse-telegram:
+  image: dock.mau.dev/tulir/mautrix-telegram:latest
+  container_name: synapse-telegram
+  restart: unless-stopped
+  depends_on:
+    - synapse
+    - postgres
+  networks:
+    - traefik
+    - postgres
+    - matrix
+  volumes:
+    - /srv/matrix/bridge/telegram:/data
+
+synapse-signal:
+  image: dock.mau.dev/tulir/mautrix-signal
+  container_name: synapse-signal
+  restart: unless-stopped
+  depends_on:
+    - synapse
+    - postgres
+    - signald
+  networks:
+    - traefik
+    - postgres
+    - matrix
+  volumes:
+    - /srv/matrix/bridge/signal:/data
+    - /srv/matrix/bridge/helper/signald:/signald
+
+signald:
+  image: docker.io/finn/signald
+  container_name: synapse-signal-signald
+  restart: unless-stopped
+  networks:
+    - traefik
+    - matrix
+  volumes:
+    - /srv/matrix/bridge/helper/signald:/signald
+
+synapse-whatsapp:
+  image: dock.mau.dev/tulir/mautrix-whatsapp:latest
+  container_name: synapse-whatsapp
+  restart: unless-stopped
+  depends_on:
+    - synapse
+    - postgres
+  networks:
+    - traefik
+    - postgres
+    - matrix
+  volumes:
+    - /srv/matrix/bridge/whatsapp:/data
+
+### Sonstiges
+
+wordpress:
+  image: wordpress:latest
+  container_name: user-website
+  restart: unless-stopped
+  depends_on:
+    - mariadb
+  networks:
+    - traefik
+    - mariadb
+  volumes:
+    - /srv/wordpress:/var/www/html/wp-content
+  environment:
+    WORDPRESS_DB_HOST: ${DB_HOST}
+    WORDPRESS_DB_USER: ${WORDPRESS_MARIADB_USER}
+    WORDPRESS_DB_PASSWORD: ${WORDPRESS_MARIADB_PASSWORD}
+    WORDPRESS_DB_NAME: ${WORDPRESS_MARIADB_NAME}
+  labels:
+    - "traefik.enable=true"
+    - "traefik.http.routers.user-website.rule=Host(`user.home`, `user.de`)"
+    - "traefik.http.routers.user-website.priority=1"
+    - "traefik.http.routers.user-website.tls=true"
+    - "traefik.http.routers.user-website.tls.certresolver=cert-user"
+    - "traefik.http.routers.user-website.entrypoints=web-secure"
+    - "traefik.http.routers.user-website-unsecure.rule=Host(`user.home`, `user.de`)"
+    - "traefik.http.routers.user-website-unsecure.entrypoints=web"
+    - "traefik.http.routers.user-website-unsecure.middlewares=redirect-https@file"
+
+gitea:
+  image: gitea/gitea:latest
+  restart: always
+  container_name: gitea
+  networks:
+    - traefik
+    - mariadb
+    - watcher
+  volumes:
+    - /srv/gitea:/data
+    - /etc/timezone:/etc/timezone:ro
+    - /etc/localtime:/etc/localtime:ro
+  depends_on:
+    - mariadb
+  labels:
+    - "traefik.enable=true"
+    #GitTea-HTTPS
+    - "traefik.http.routers.gitea.rule=Host(`git.user.home`)"
+    - "traefik.http.routers.gitea.entrypoints=web-secure"
+    - "traefik.http.routers.gitea.tls=true"
+    - "traefik.http.routers.gitea.tls.certresolver=cert-user"
+    - "traefik.http.routers.gitea.service=gitea-lb"
+    #GitTea-HTTP-Upgrade
+    - "traefik.http.routers.gitea-unsecure.rule=Host(`git.user.home`)"
+    - "traefik.http.routers.gitea-unsecure.entrypoints=web"
+    - "traefik.http.routers.gitea-unsecure.middlewares=redirect-https@file"
+    - "traefik.http.routers.gitea-unsecure.service=gitea-lb"
+    #GitTea-SHH
+    - "traefik.tcp.routers.gitea-ssh.rule=HostSNI(`*`)"
+    - "traefik.tcp.routers.gitea-ssh.entrypoints=ssh"
+    # Load-Balancer for special Ports
+    - "traefik.http.services.gitea-lb.loadbalancer.server.port=3000"

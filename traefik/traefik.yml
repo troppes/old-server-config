@@ -1,0 +1,41 @@
+api:
+  dashboard: true
+
+entryPoints:
+  web:
+    address: ":80"
+  web-secure:
+    address: ":443"
+#  ssh:
+#    address: ":2244"
+#  mc-tcp:
+#    address: ":25565"
+#  mc-udp:
+#    address: ":25565/udp"
+#  gmod-tcp:
+#    address: ":27015"
+#  gmod-udp:
+#    address: ":27015/udp"
+  ts-udp:
+    address: ":9987/udp"
+  ts-tcp1:
+    address: ":10011"
+  ts-tcp2:
+    address: ":30033"
+
+providers:
+  # Enable the file provider to define routers / middlewares / services in a file
+  file:
+    filename: dynamic_conf.yml
+  docker:
+    network: traefik
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+
+certificatesResolvers:
+  cert-user:
+    acme:
+      email: e@mail.com
+      storage: acme.json
+      #caServer: "https://acme-staging-v02.api.letsencrypt.org/directory"
+      tlsChallenge: {}

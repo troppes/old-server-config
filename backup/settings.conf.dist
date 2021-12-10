@@ -1,0 +1,14 @@
+#Name of the Backup file
+date=$(date "+%Y%m%d")
+backupName=backup_"${date}".7z
+backupPassword=pass
+
+#Folder Name for Backups
+backupFolderName=backup_files
+
+#Log Name
+logName=backup.log
+
+#MariaDB Credentials
+mariaUser=user
+mariaPassword=pass

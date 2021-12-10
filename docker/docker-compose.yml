@@ -1,0 +1,304 @@
+version: "3.0"
+services:
+  traefik:
+    image: traefik:latest
+    container_name: traefik
+    restart: unless-stopped
+    networks:
+      - traefik
+    ports:
+      - "80:80"
+      - "443:443"
+      - "2244:2244"
+      - "25565:25565/tcp"
+      - "25565:25565/udp"
+      - "27015:27015/tcp"
+      - "27015:27015/udp"
+      - "9987:9987/udp"
+      - "10011:10011"
+      - "30033:30033"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /srv/traefik/traefik.yml:/traefik.yml
+      - /srv/traefik/dynamic_conf.yml:/dynamic_conf.yml
+      - /srv/traefik/acme.json:/acme.json
+    security_opt:
+      - no-new-privileges:true
+
+  mariadb:
+    image: mariadb:latest
+    container_name: mariadb
+    restart: unless-stopped
+    networks:
+      - mariadb
+    volumes:
+      - /srv/mariadb/data:/var/lib/mysql  # Requested, specifies the path to MySQL data persistent store.
+      - /srv/mariadb/conf.d:/etc/mysql/conf.d
+    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW --skip-innodb-read-only-compressed
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD}  # Requested, set the root's password of MySQL service.
+      - MYSQL_LOG_CONSOLE=true
+
+  nextcloud:
+    image: nextcloud:latest
+    container_name: nextcloud
+    restart: unless-stopped
+    depends_on:
+      - mariadb
+    networks:
+      - mariadb
+      - traefik
+    volumes:
+      - /srv/nextcloud:/var/www/html
+    environment:
+      - VIRTUAL_HOST=cloud.user.home
+      - MYSQL_HOST=${DB_HOST}
+      - MYSQL_DATABASE=${NEXTCLOUD_MARIADB_DATABASE}
+      - MYSQL_USER=${NEXTCLOUD_MARIADB_USER}
+      - MYSQL_PASSWORD=${NEXTCLOUD_MARIADB_PASSWORD}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nextcloud.rule=Host(`cloud.user.home`)"
+      - "traefik.http.routers.nextcloud.tls=true"
+      - "traefik.http.routers.nextcloud.tls.certresolver=cert-user"
+      - "traefik.http.routers.nextcloud.entrypoints=web-secure"
+      - "traefik.http.routers.nextcloud.middlewares=nextcloud-headers@file, caldav-wellknown@file"
+      - "traefik.http.routers.nextcloud-unsecure.rule=Host(`cloud.user.home`)"
+      - "traefik.http.routers.nextcloud-unsecure.entrypoints=web"
+      - "traefik.http.routers.nextcloud-unsecure.middlewares=redirect-https@file, caldav-wellknown@file"
+
+  website:
+    image: floreitz/website:latest
+    container_name: website
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.website.rule=Host(`user.home`, `user.de`)"
+      - "traefik.http.routers.website.priority=1"
+      - "traefik.http.routers.website.tls=true"
+      - "traefik.http.routers.website.tls.certresolver=cert-user"
+      - "traefik.http.routers.website.entrypoints=web-secure"
+      - "traefik.http.routers.website.service=website-lb"
+      - "traefik.http.routers.website-unsecure.rule=Host(`user.home`, `user.de`)"
+      - "traefik.http.routers.website-unsecure.entrypoints=web"
+      - "traefik.http.routers.website-unsecure.middlewares=redirect-https@file"
+      # load-Balancer to route to another port
+      - "traefik.http.services.website-lb.loadbalancer.server.port=8080"
+
+  bitwarden:
+    image: vaultwarden/server
+    container_name: bitwarden
+    restart: unless-stopped
+    networks:
+      - traefik
+    volumes:
+      - /srv/bitwarden:/data
+    environment:
+      WEBSOCKET_ENABLED: 'true' # Required to use websockets
+      SIGNUPS_ALLOWED: 'false'   # set to false to disable signups
+      ADMIN_TOKEN: ${BITWARDEN_ADMIN_TOKEN}
+      LOG_FILE: '/data/bitwarden.log'
+    labels:
+      - "traefik.enable=true"
+      # Bitwarden UI
+      - "traefik.http.routers.bitwarden-ui.rule=Host(`vault.user.home`)"
+      - "traefik.http.routers.bitwarden-ui.entrypoints=web-secure"
+      - "traefik.http.routers.bitwarden-ui.tls=true"
+      - "traefik.http.routers.bitwarden-ui.tls.certresolver=cert-user"
+      - "traefik.http.routers.bitwarden-ui.service=bitwarden-ui-lb"
+      # Bitwarden UI HTTPS-Upgrade
+      - "traefik.http.routers.bitwarden-ui-unsecure.rule=Host(`vault.user.home`)"
+      - "traefik.http.routers.bitwarden-ui-unsecure.entrypoints=web"
+      - "traefik.http.routers.bitwarden-ui-unsecure.middlewares=redirect-https@file"
+      - "traefik.http.routers.bitwarden-ui-unsecure.service=bitwarden-ui-lb"
+      # Bitwarden Websocket
+      - "traefik.http.routers.bitwarden-websocket.rule=Host(`vault.user.home`) && Path(`/notifications/hub`)"
+      - "traefik.http.routers.bitwarden-websocket.entrypoints=web-secure"
+      - "traefik.http.routers.bitwarden-websocket.tls=true"
+      - "traefik.http.routers.bitwarden-websocket.tls.certresolver=cert-user"
+      - "traefik.http.routers.bitwarden-websocket.service=bitwarden-websocket-lb"
+      # Bitwarden Websocket HTTPS-Upgrade
+      - "traefik.http.routers.bitwarden-websocket-unsecure.rule=Host(`vault.user.home`) && Path(`/notifications/hub`)"
+      - "traefik.http.routers.bitwarden-websocket-unsecure.entrypoints=web"
+      - "traefik.http.routers.bitwarden-websocket-unsecure.middlewares=redirect-https@file"
+      - "traefik.http.routers.bitwarden-websocket-unsecure.service=bitwarden-websocket-lb"
+      # load-Balancer to route to another port
+      - "traefik.http.services.bitwarden-websocket-lb.loadbalancer.server.port=3012"
+      - "traefik.http.services.bitwarden-ui-lb.loadbalancer.server.port=80"
+
+  drone:
+    image: drone/drone:latest
+    container_name: drone
+    restart: unless-stopped
+    networks:
+      - traefik
+    volumes:
+      - /srv/drone:/data
+    environment:
+      DRONE_GITHUB_CLIENT_ID: ${DRONE_GITHUB_CLIENT_ID}
+      DRONE_GITHUB_CLIENT_SECRET: ${DRONE_GITHUB_CLIENT_SECRET}
+      DRONE_RPC_SECRET: ${DRONE_RPC_SECRET}
+      DRONE_SERVER_HOST: drone.user.home
+      DRONE_SERVER_PROTO: https
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.drone.rule=Host(`drone.user.home`)"
+      - "traefik.http.routers.drone.tls=true"
+      - "traefik.http.routers.drone.tls.certresolver=cert-user"
+      - "traefik.http.routers.drone.entrypoints=web-secure"
+      - "traefik.http.routers.drone-unsecure.rule=Host(`drone.user.home`)"
+      - "traefik.http.routers.drone-unsecure.entrypoints=web"
+      - "traefik.http.routers.drone-unsecure.middlewares=redirect-https@file"
+
+  drone-runner-docker:
+    image: drone/drone-runner-docker:latest
+    container_name: drone-runner-docker
+    restart: unless-stopped
+    networks:
+      - traefik
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      DRONE_RPC_PROTO: https
+      DRONE_RPC_HOST: drone.user.home
+      DRONE_RPC_SECRET: ${DRONE_RPC_SECRET}
+      DRONE_RUNNER_CAPACITY: 2
+      DRONE_RUNNER_NAME: user.home
+
+  drone-runner-ssh:
+    image: drone/drone-runner-ssh:latest
+    container_name: drone-runner-ssh
+    restart: unless-stopped
+    networks:
+      - traefik
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      DRONE_RPC_PROTO: https
+      DRONE_RPC_HOST: drone.user.home
+      DRONE_RPC_SECRET: ${DRONE_RPC_SECRET}
+      DRONE_RUNNER_CAPACITY: 2
+      DRONE_RUNNER_NAME: user.home
+
+  teamspeak:
+    image: teamspeak
+    container_name: teamspeak
+    restart: unless-stopped
+    depends_on:
+      - mariadb
+    networks:
+      - traefik
+      - mariadb
+    volumes:
+    - /srv/teamspeak:/var/ts3server/
+    environment:
+      TS3SERVER_DB_PLUGIN: ts3db_mariadb
+      TS3SERVER_DB_SQLCREATEPATH: create_mariadb
+      TS3SERVER_DB_HOST: ${DB_HOST}
+      TS3SERVER_DB_USER: ${TS_MARIADB_USERNAME}
+      TS3SERVER_DB_PASSWORD: ${TS_MARIADB_PASSWORD}
+      TS3SERVER_DB_NAME: ${TS_MARIADB_DATABASE}
+      TS3SERVER_DB_WAITUNTILREADY: 30
+      TS3SERVER_LICENSE: accept
+    labels:
+      - "traefik.enable=true"
+      #Teamspeak-TCP-Upgrade
+      - "traefik.tcp.routers.ts-tcp.rule=HostSNI(`*`)"
+      - "traefik.tcp.routers.ts-tcp.entrypoints=ts-tcp1"
+      - "traefik.tcp.routers.ts-tcp2.rule=HostSNI(`*`)"
+      - "traefik.tcp.routers.ts-tcp2.entrypoints=ts-tcp2"
+      - "traefik.tcp.routers.ts-tcp2.service=ts-lb"
+      - "traefik.tcp.services.ts-lb.loadbalancer.server.port=30033"
+
+      #Teamspeak-UDP-Upgrade
+      - "traefik.udp.routers.ts-udp.entrypoints=ts-udp"
+
+
+  sinusbot:
+    image: sinusbot/docker
+    container_name: sinusbot
+    restart: unless-stopped
+    networks:
+      - traefik
+    volumes:
+      - /srv/sinusbot/scripts:/opt/sinusbot/scripts
+      - /srv/sinusbot/data:/opt/sinusbot/data
+    environment:
+      UID: 1000
+      GID: 1000
+    labels:
+      - "traefik.enable=true"
+      # SinusBot
+      - "traefik.http.routers.sinusbot.rule=Host(`musicbot.user.home`)"
+      - "traefik.http.routers.sinusbot.entrypoints=web-secure"
+      - "traefik.http.routers.sinusbot.tls=true"
+      - "traefik.http.routers.sinusbot.tls.certresolver=cert-user"
+      - "traefik.http.routers.sinusbot.service=sinusbot-lb"
+      # SinusBot HTTPS-Upgrade
+      - "traefik.http.routers.sinusbot-unsecure.rule=Host(`musicbot.user.home`)"
+      - "traefik.http.routers.sinusbot-unsecure.entrypoints=web"
+      - "traefik.http.routers.sinusbot-unsecure.middlewares=redirect-https@file"
+      - "traefik.http.routers.sinusbot-unsecure.service=sinusbot-lb"
+      # load-Balancer to route to another port
+      - "traefik.http.services.sinusbot-lb.loadbalancer.server.port=8087"
+
+  directus:
+    image: directus/directus:latest
+    container_name: directus
+    restart: unless-stopped
+    networks:
+      - traefik
+      - mariadb
+    volumes:
+      - /srv/directus/database:/directus/database
+      - /srv/directus/uploads:/directus/uploads
+      - /srv/directus/extensions:/directus/extensions
+    environment:
+      DB_CLIENT: mysql
+      DB_HOST: "${DB_HOST}"
+      DB_PORT: "${DB_PORT}"
+      DB_DATABASE: "${DIRECTUS_MARIADB_NAME}"
+      DB_USER: "${DIRECTUS_MARIADB_USERNAME}"
+      DB_PASSWORD: "${DIRECTUS_MARIADB_PASSWORD}"
+      KEY: "${DIRECTUS_AUTH_PUBLICKEY}"
+      SECRET: "${DIRECTUS_AUTH_SECRETKEY}"
+      EMAIL_TRANSPORT: smtp
+      EMAIL_FROM: "${MAIL_FROM}"
+      EMAIL_SMTP_HOST: "${MAIL_HOST}"
+      EMAIL_SMTP_PORT: "${MAIL_PORT}"
+      EMAIL_SMTP_USER: "${MAIL_USERNAME}"
+      EMAIL_SMTP_PASSWORD: "${MAIL_PASSWORD}"
+      EMAIL_SMTP_SECURE: 0
+    labels:
+      - "traefik.enable=true"
+      # Directus
+      - "traefik.http.routers.directus.rule=Host(`cms.user.home`)"
+      - "traefik.http.routers.directus.entrypoints=web-secure"
+      - "traefik.http.routers.directus.tls=true"
+      - "traefik.http.routers.directus.tls.certresolver=cert-user"
+      # Directus HTTPS-Upgrade
+      - "traefik.http.routers.directus-unsecure.rule=Host(`cms.user.home`)"
+      - "traefik.http.routers.directus-unsecure.entrypoints=web"
+      - "traefik.http.routers.directus-unsecure.middlewares=redirect-https@file"
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_SCHEDULE: 0 0 4 * * *
+      TZ: Europe/Berlin
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_NOTIFICATIONS: shoutrrr
+      WATCHTOWER_NOTIFICATION_URL: "${WATCHTOWER_NOTIFICATION_URL}"
+
+networks:
+  traefik:
+    external: true
+  mariadb:
+    internal: true

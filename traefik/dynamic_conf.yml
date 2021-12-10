@@ -1,0 +1,40 @@
+http:
+  routers:
+    api-unsecure:
+      rule: "Host(`monitor.user.home`)"
+      service: api@internal
+      middlewares:
+        - redirect-https
+      entryPoints:
+        - web
+    api:
+      rule: "Host(`monitor.user.home`)"
+      service: api@internal
+      tls:
+        certResolver: cert
+      middlewares:
+        - auth
+      entryPoints:
+        - web-secure
+
+  middlewares:
+    auth:
+      basicAuth:
+        users:
+          - "user:PASSWORDHASH"
+    redirect-https:
+      redirectScheme:
+        scheme: https
+    nextcloud-headers:
+      headers:
+        customFrameOptionsValue: SAMEORIGIN
+        frameDeny: true
+        sslRedirect: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 15552000
+    caldav-wellknown:
+      redirectRegex:
+        regex: "https://(.*)/.well-known/(card|cal)dav"
+        replacement: "https://${1}/remote.php/dav/"
+        permanent: true

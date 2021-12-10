@@ -1,0 +1,28 @@
+#info "Backing up Postgres"
+#docker exec -t postgres pg_dumpall -c -U postgres > "${BACKUP_PATH}"/postgres-full-backup-"$(date +%F)".sql && EXIT_CODE=$? || EXIT_CODE=$?
+#if [ "$EXIT_CODE" != 0 ]; then
+#	err "Failed to create a backup for Postgres!"
+#fi
+
+#info "Backing up Matrix"
+#mkdir ${BACKUP_PATH}/matrix > /dev/null && EXIT_CODE=$? || EXIT_CODE=$?
+#cp /srv/matrix/synapse/homeserver.yaml "${BACKUP_PATH}/matrix/homeserver.yaml" > /dev/null && EXIT_CODE=$? || EXIT_CODE=$?
+#if [ "$EXIT_CODE" != 0 ]; then
+#	err "Failed to create a backup for Matrix-Synapse!"
+#fi
+#cp /srv/matrix/synapse/matrix.reitz.dev.signing.key "${BACKUP_PATH}"/matrix/matrix.reitz.dev.signing.key > /dev/null && EXIT_CODE=$? || EXIT_CODE=$?
+#if [ "$EXIT_CODE" != 0 ]; then
+#	err "Failed to create a backup for Matrix-Signingkey!"
+#fi
+#cp /srv/matrix/bridge/telegram/config.yaml "${BACKUP_PATH}"/matrix/telegram.yaml > /dev/null && EXIT_CODE=$? || EXIT_CODE=$?
+#if [ "$EXIT_CODE" != 0 ]; then
+#	err "Failed to create a backup for Matrix-Telegram!"
+#fi
+#cp /srv/matrix/bridge/signal/config.yaml "${BACKUP_PATH}"/matrix/signal.yaml > /dev/null && EXIT_CODE=$? || EXIT_CODE=$?
+#if [ "$EXIT_CODE" != 0 ]; then
+#	err "Failed to create a backup for Matrix-Signal!"
+#fi
+#cp /srv/matrix/bridge/whatsapp/config.yaml "${BACKUP_PATH}"/matrix/whatsapp.yaml > /dev/null && EXIT_CODE=$? || EXIT_CODE=$?
+#if [ "$EXIT_CODE" != 0 ]; then
+#	err "Failed to create a backup for Matrix-Whatsapp!"
+#fi
