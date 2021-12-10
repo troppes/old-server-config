@@ -11,7 +11,7 @@ http:
       rule: "Host(`monitor.user.home`)"
       service: api@internal
       tls:
-        certResolver: cert
+        certResolver: cert-user
       middlewares:
         - auth
       entryPoints:
